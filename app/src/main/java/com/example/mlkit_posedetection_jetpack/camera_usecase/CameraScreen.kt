@@ -8,19 +8,27 @@ import androidx.annotation.RequiresApi
 import androidx.camera.core.CameraSelector
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -31,7 +39,9 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.mlkit_posedetection_jetpack.R
 import com.example.mlkit_posedetection_jetpack.posedetector.graphic.GraphicOverlay
 import com.example.mlkit_posedetection_jetpack.posedetector.graphic.PoseGraphic
@@ -65,6 +75,14 @@ fun CameraScreen() {
         )
     }
 
+    // Initialize speech recognition when the composable is first created
+    DisposableEffect(cameraViewModel) {
+        cameraViewModel.initializeSpeechRecognition(context)
+        onDispose {
+            cameraViewModel.stopSpeechRecognition()
+        }
+    }
+
     Scaffold{ padding ->
         Box(
             modifier = Modifier
@@ -94,6 +112,96 @@ fun CameraScreen() {
                     graphicOverlay.clear()
                 }
             }
+            
+            // Speech recognition and injury detection status overlay
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                // Speech listening status
+                Card(
+                    modifier = Modifier.padding(bottom = 8.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (cameraViewModel.isListening.value) 
+                            Color.Green.copy(alpha = 0.8f) 
+                        else 
+                            Color.Gray.copy(alpha = 0.8f)
+                    ),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text(
+                        text = if (cameraViewModel.isListening.value) 
+                            "🎤 Listening... Say 'process img'" 
+                        else 
+                            "🎤 Speech recognition inactive",
+                        modifier = Modifier.padding(12.dp),
+                        color = Color.White,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+
+                // Processing status
+                if (cameraViewModel.isProcessingImage.value) {
+                    Card(
+                        modifier = Modifier.padding(bottom = 8.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = Color.Blue.copy(alpha = 0.8f)
+                        ),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text(
+                            text = "🔍 Analyzing image for injuries...",
+                            modifier = Modifier.padding(12.dp),
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+
+                // Last detection result
+                cameraViewModel.lastDetectionResult.value?.let { result ->
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (result.hasInjury) 
+                                Color.Red.copy(alpha = 0.9f) 
+                            else 
+                                Color.Green.copy(alpha = 0.9f)
+                        ),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                text = if (result.hasInjury) "⚠️ INJURY DETECTED" else "✅ NO INJURY",
+                                color = Color.White,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            if (result.hasInjury) {
+                                Text(
+                                    text = "Type: ${result.injuryType}",
+                                    color = Color.White,
+                                    fontSize = 14.sp,
+                                    modifier = Modifier.padding(top = 4.dp)
+                                )
+                            }
+                            Text(
+                                text = "Confidence: ${(result.confidence * 100).toInt()}%",
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                modifier = Modifier.padding(top = 2.dp)
+                            )
+                        }
+                    }
+                }
+            }
+            
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,

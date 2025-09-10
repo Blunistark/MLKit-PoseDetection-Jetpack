@@ -11,6 +11,8 @@ import android.widget.Toast
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ExperimentalGetImage
 import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.ImageCapture
+import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
@@ -23,6 +25,7 @@ import androidx.camera.video.Recording
 import androidx.camera.video.VideoCapture
 import androidx.camera.video.VideoRecordEvent
 import androidx.camera.view.PreviewView
+import androidx.compose.runtime.mutableStateOf
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
@@ -60,6 +63,96 @@ class CameraViewModel(
     private var lensFacing: Int = cameraSelector
     private var imageAnalysis: ImageAnalysis? = null
     private var videoCapture: VideoCapture<Recorder>? = null
+    private var imageCapture: ImageCapture? = null
+    
+    // Speech recognition and injury detection
+    private var speechRecognitionManager: SpeechRecognitionManager? = null
+    private val injuryDetectionAPI = InjuryDetectionAPI()
+    
+    // State for UI
+    val isListening = mutableStateOf(false)
+    val lastDetectionResult = mutableStateOf<InjuryDetectionResult?>(null)
+    val isProcessingImage = mutableStateOf(false)
+
+    fun initializeSpeechRecognition(context: Context) {
+        speechRecognitionManager = SpeechRecognitionManager(
+            context = context,
+            onSpeechResult = { result ->
+                handleSpeechResult(context, result)
+            },
+            onListeningStateChanged = { listening ->
+                isListening.value = listening
+            }
+        )
+        speechRecognitionManager?.startListening()
+    }
+
+    fun stopSpeechRecognition() {
+        speechRecognitionManager?.stopListening()
+    }
+
+    private fun handleSpeechResult(context: Context, result: String) {
+        Log.d(TAG, "Speech result: $result")
+        if (result.lowercase().contains("process img") || 
+            result.lowercase().contains("process image") ||
+            result.lowercase().contains("analyze") ||
+            result.lowercase().contains("detect injury")) {
+            captureAndAnalyzeImage(context)
+        }
+    }
+
+    private fun captureAndAnalyzeImage(context: Context) {
+        if (isProcessingImage.value) {
+            Log.d(TAG, "Already processing an image, ignoring request")
+            return
+        }
+        
+        val imageCapture = this.imageCapture ?: run {
+            Log.e(TAG, "ImageCapture not initialized")
+            Toast.makeText(context, "Camera not ready for capture", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        isProcessingImage.value = true
+        
+        val outputFileOptions = ImageCapture.OutputFileOptions.Builder(
+            File(context.cacheDir, "captured_image_${System.currentTimeMillis()}.jpg")
+        ).build()
+
+        imageCapture.takePicture(
+            outputFileOptions,
+            ContextCompat.getMainExecutor(context),
+            object : ImageCapture.OnImageSavedCallback {
+                override fun onImageSaved(output: ImageCapture.OutputFileResults) {
+                    Log.d(TAG, "Image captured successfully")
+                    
+                    // Use the current bitmap from pose detection for analysis
+                    bitmap?.let { currentBitmap ->
+                        // Use mock API for testing (change to real API when available)
+                        injuryDetectionAPI.mockAnalyzeImage(currentBitmap) { result ->
+                            isProcessingImage.value = false
+                            lastDetectionResult.value = result
+                            
+                            result?.let {
+                                Toast.makeText(context, it.message, Toast.LENGTH_LONG).show()
+                            } ?: run {
+                                Toast.makeText(context, "Failed to analyze image", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    } ?: run {
+                        isProcessingImage.value = false
+                        Toast.makeText(context, "No image available for analysis", Toast.LENGTH_SHORT).show()
+                    }
+                }
+
+                override fun onError(exception: ImageCaptureException) {
+                    isProcessingImage.value = false
+                    Log.e(TAG, "Image capture failed", exception)
+                    Toast.makeText(context, "Image capture failed: ${exception.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
+        )
+    }
 
 
     /**
@@ -89,6 +182,7 @@ class CameraViewModel(
     fun changeCameraFacing(lensFacing: Int,context: Context, previewView: PreviewView) {
         this.lensFacing = lensFacing
         this.videoCapture = null
+        this.imageCapture = null
         bindAllUseCase(context = context, previewView = previewView)
     }
 
@@ -106,6 +200,7 @@ class CameraViewModel(
             setSurfaceProvider(previewView.surfaceProvider)
         }
         imageAnalysis = bindAnalysisUseCase(context)
+        imageCapture = ImageCapture.Builder().build()
         //Log.d("CameraProvider","videoCapture")
         if (videoCapture == null) {
             videoCapture = createVideoCaptureUseCase(context)
@@ -113,8 +208,8 @@ class CameraViewModel(
 
         val cameraSelector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
 
-        // bind life cycle without video capture
-        cameraProviderLiveData.value?.bindToLifecycle(lifecycleOwner, cameraSelector, preview, imageAnalysis)
+        // bind life cycle with image capture
+        cameraProviderLiveData.value?.bindToLifecycle(lifecycleOwner, cameraSelector, preview, imageAnalysis, imageCapture)
     }
 
     @androidx.annotation.OptIn(ExperimentalGetImage::class)
@@ -252,6 +347,11 @@ class CameraViewModel(
             Manifest.permission.CAMERA,
             Manifest.permission.RECORD_AUDIO
         )
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        stopSpeechRecognition()
     }
 
 }

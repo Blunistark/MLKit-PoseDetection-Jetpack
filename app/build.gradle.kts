@@ -81,6 +81,13 @@ dependencies {
     //base sdk model
     implementation ("com.google.mlkit:pose-detection:18.0.0-beta3")
 
+    
+    // HTTP client for cloud API
+    implementation("com.squareup.okhttp3:okhttp:4.11.0")
+    
+    // JSON parsing
+    implementation("org.json:json:20230227")
+
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
