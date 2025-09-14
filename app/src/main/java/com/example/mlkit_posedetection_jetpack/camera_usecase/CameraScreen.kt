@@ -32,6 +32,8 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -51,22 +53,23 @@ import com.google.mlkit.vision.pose.Pose
 @RequiresApi(Build.VERSION_CODES.P)
 @SuppressLint("UnsafeOptInUsageError", "RememberReturnType")
 @Composable
-fun CameraScreen() {
+fun CameraScreen(
+    isFrontCamera: Boolean = false,
+    onCameraViewModelReady: ((CameraViewModel) -> Unit)? = null
+) {
     val context = LocalContext.current
     val previewView = remember { PreviewView(context) }
     val lifecycleOwner = LocalLifecycleOwner.current
     val graphicOverlay = remember { GraphicOverlay() }
     val poseResult = remember { mutableStateOf<Pose?>(null) }
     val bitmapImage = remember { mutableStateOf<Bitmap?>(null) }
-    val cameraSelector: MutableState<Int> = remember {
-        mutableStateOf(CameraSelector.LENS_FACING_FRONT)
-    }
+    val cameraSelector = if (isFrontCamera) CameraSelector.LENS_FACING_FRONT else CameraSelector.LENS_FACING_BACK
 
-    val cameraViewModel: CameraViewModel = remember {
+    val cameraViewModel: CameraViewModel = remember(isFrontCamera) {
         CameraViewModel(
             graphicOverlay = graphicOverlay,
             lifecycleOwner = lifecycleOwner,
-            cameraSelector = cameraSelector.value,
+            cameraSelector = cameraSelector,
             onResults = { bitmap, pose ->
                 bitmapImage.value?.recycle()
                 bitmapImage.value = bitmap
@@ -75,12 +78,28 @@ fun CameraScreen() {
         )
     }
 
+    // Provide the CameraViewModel to the parent composable
+    LaunchedEffect(cameraViewModel) {
+        onCameraViewModelReady?.invoke(cameraViewModel)
+    }
+
     // Initialize speech recognition when the composable is first created
     DisposableEffect(cameraViewModel) {
         cameraViewModel.initializeSpeechRecognition(context)
         onDispose {
             cameraViewModel.stopSpeechRecognition()
         }
+    }
+
+    // Trigger camera rebind when camera facing changes
+    DisposableEffect(isFrontCamera) {
+        cameraViewModel.changeCameraFacing(cameraSelector, context, previewView)
+        onDispose { }
+    }
+
+    // Bind camera once when composable is first created
+    LaunchedEffect(Unit) {
+        cameraViewModel.bindAllUseCase(context, previewView)
     }
 
     Scaffold{ padding ->
@@ -93,7 +112,7 @@ fun CameraScreen() {
                         width = screen.size.width.toFloat(),
                         height = screen.size.height.toFloat(),
                     )
-                    cameraViewModel.bindAllUseCase(context, previewView)
+                    // Removed bindAllUseCase call from here to prevent camera closing/reopening
                 }
         ) {
             CameraPreview(
@@ -199,34 +218,6 @@ fun CameraScreen() {
                             )
                         }
                     }
-                }
-            }
-            
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(
-                    onClick = {
-                        cameraSelector.value = if (cameraSelector.value == CameraSelector.LENS_FACING_BACK) {
-                            CameraSelector.LENS_FACING_FRONT
-                        } else {
-                            CameraSelector.LENS_FACING_BACK
-                        }
-                        Log.d("CameraSelector", "CameraSelector: ${cameraSelector.value}")
-                        cameraViewModel.changeCameraFacing(cameraSelector.value, previewView = previewView, context = context)
-                    },
-                    modifier = Modifier
-                        .offset(16.dp, 16.dp)
-                ) {
-                    Icon(
-                        painter = painterResource(id = R.drawable.ic_camera_switch),
-                        contentDescription = "Camera Flip",
-                        tint = Color.White,
-                        modifier = Modifier
-                            .size(30.dp)
-                    )
                 }
             }
         }

@@ -64,40 +64,51 @@ class CameraViewModel(
     private var imageAnalysis: ImageAnalysis? = null
     private var videoCapture: VideoCapture<Recorder>? = null
     private var imageCapture: ImageCapture? = null
-    
+
     // Speech recognition and injury detection
     private var speechRecognitionManager: SpeechRecognitionManager? = null
     private val injuryDetectionAPI = InjuryDetectionAPI()
-    
+
     // State for UI
     val isListening = mutableStateOf(false)
     val lastDetectionResult = mutableStateOf<InjuryDetectionResult?>(null)
     val isProcessingImage = mutableStateOf(false)
 
     fun initializeSpeechRecognition(context: Context) {
+        Log.d(TAG, "Initializing speech recognition")
         speechRecognitionManager = SpeechRecognitionManager(
             context = context,
             onSpeechResult = { result ->
+                Log.d(TAG, "Speech recognition received: '$result'")
                 handleSpeechResult(context, result)
             },
             onListeningStateChanged = { listening ->
+                Log.d(TAG, "Speech recognition listening state changed: $listening")
                 isListening.value = listening
             }
         )
         speechRecognitionManager?.startListening()
+        Log.d(TAG, "Speech recognition initialized and started")
     }
 
     fun stopSpeechRecognition() {
+        Log.d(TAG, "Stopping speech recognition")
         speechRecognitionManager?.stopListening()
     }
 
     private fun handleSpeechResult(context: Context, result: String) {
-        Log.d(TAG, "Speech result: $result")
-        if (result.lowercase().contains("process img") || 
-            result.lowercase().contains("process image") ||
-            result.lowercase().contains("analyze") ||
-            result.lowercase().contains("detect injury")) {
+        val lowerResult = result.lowercase()
+        Log.d(TAG, "Processing speech result: '$result' (lowercase: '$lowerResult')")
+
+        val triggerWords = listOf("process img", "process image", "analyze", "detect injury", "check injury", "scan")
+        val triggered = triggerWords.any { lowerResult.contains(it) }
+
+        if (triggered) {
+            Log.d(TAG, "Speech command recognized, triggering image capture")
+            Toast.makeText(context, "Command recognized: '$result'", Toast.LENGTH_SHORT).show()
             captureAndAnalyzeImage(context)
+        } else {
+            Log.d(TAG, "Speech result does not match any trigger words")
         }
     }
 
@@ -106,7 +117,7 @@ class CameraViewModel(
             Log.d(TAG, "Already processing an image, ignoring request")
             return
         }
-        
+
         val imageCapture = this.imageCapture ?: run {
             Log.e(TAG, "ImageCapture not initialized")
             Toast.makeText(context, "Camera not ready for capture", Toast.LENGTH_SHORT).show()
@@ -114,34 +125,64 @@ class CameraViewModel(
         }
 
         isProcessingImage.value = true
-        
-        val outputFileOptions = ImageCapture.OutputFileOptions.Builder(
-            File(context.cacheDir, "captured_image_${System.currentTimeMillis()}.jpg")
-        ).build()
+
+        val outputFile = File(context.cacheDir, "captured_image_${System.currentTimeMillis()}.jpg")
+        val outputFileOptions = ImageCapture.OutputFileOptions.Builder(outputFile).build()
 
         imageCapture.takePicture(
             outputFileOptions,
             ContextCompat.getMainExecutor(context),
             object : ImageCapture.OnImageSavedCallback {
                 override fun onImageSaved(output: ImageCapture.OutputFileResults) {
-                    Log.d(TAG, "Image captured successfully")
-                    
-                    // Use the current bitmap from pose detection for analysis
-                    bitmap?.let { currentBitmap ->
-                        // Use mock API for testing (change to real API when available)
-                        injuryDetectionAPI.mockAnalyzeImage(currentBitmap) { result ->
+                    Log.d(TAG, "Image captured successfully to: ${outputFile.absolutePath}")
+
+                    try {
+                        // Read the captured image file and convert to bitmap
+                        if (!outputFile.exists()) {
+                            Log.e(TAG, "Captured file does not exist: ${outputFile.absolutePath}")
+                            isProcessingImage.value = false
+                            Toast.makeText(context, "Failed to capture image", Toast.LENGTH_SHORT).show()
+                            return
+                        }
+
+                        val capturedBitmap = android.graphics.BitmapFactory.decodeFile(outputFile.absolutePath)
+                        if (capturedBitmap == null) {
+                            Log.e(TAG, "Failed to decode captured image from: ${outputFile.absolutePath}")
+                            isProcessingImage.value = false
+                            Toast.makeText(context, "Failed to process captured image", Toast.LENGTH_SHORT).show()
+                            return
+                        }
+
+                        Log.d(TAG, "Captured bitmap size: ${capturedBitmap.width}x${capturedBitmap.height}")
+
+                        // Use real API for injury detection
+                        injuryDetectionAPI.analyzeImage(capturedBitmap, context.cacheDir, null, null) { result ->
                             isProcessingImage.value = false
                             lastDetectionResult.value = result
-                            
+
                             result?.let {
                                 Toast.makeText(context, it.message, Toast.LENGTH_LONG).show()
+                                Log.d(TAG, "Injury detection result: $it")
                             } ?: run {
                                 Toast.makeText(context, "Failed to analyze image", Toast.LENGTH_SHORT).show()
+                                Log.e(TAG, "No result received from injury detection")
                             }
                         }
-                    } ?: run {
+
+                        // Clean up the temporary file
+                        try {
+                            if (outputFile.exists()) {
+                                val deleted = outputFile.delete()
+                                Log.d(TAG, "Temporary file cleanup: ${if (deleted) "success" else "failed"}")
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Failed to cleanup captured file", e)
+                        }
+
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error processing captured image", e)
                         isProcessingImage.value = false
-                        Toast.makeText(context, "No image available for analysis", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "Error processing image: ${e.message}", Toast.LENGTH_SHORT).show()
                     }
                 }
 
@@ -154,6 +195,34 @@ class CameraViewModel(
         )
     }
 
+    // Add method to manually trigger image analysis without capture (useful for testing)
+    fun manuallyAnalyzeCurrentImage(context: Context) {
+        if (isProcessingImage.value) {
+            Toast.makeText(context, "Already processing an image", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        bitmap?.let { currentBitmap ->
+            isProcessingImage.value = true
+            Log.d(TAG, "Manually analyzing current pose detection image")
+
+            injuryDetectionAPI.analyzeImage(currentBitmap, context.cacheDir, null, null) { result ->
+                isProcessingImage.value = false
+                lastDetectionResult.value = result
+
+                result?.let {
+                    Toast.makeText(context, "Manual Analysis: ${it.message}", Toast.LENGTH_LONG).show()
+                    Log.d(TAG, "Manual analysis result: $it")
+                } ?: run {
+                    Toast.makeText(context, "Manual analysis failed", Toast.LENGTH_SHORT).show()
+                    Log.e(TAG, "Manual analysis returned no result")
+                }
+            }
+        } ?: run {
+            Toast.makeText(context, "No image available for analysis", Toast.LENGTH_SHORT).show()
+            Log.e(TAG, "No bitmap available for manual analysis")
+        }
+    }
 
     /**
      * Create an instance which interacts with the camera service via the given application context.
@@ -166,7 +235,7 @@ class CameraViewModel(
             viewModelScope.launch {
                 try {
                     cameraProviderLiveData.value = cameraProviderFuture.get()
-                    Log.d("CameraProvider", "hi")
+                    Log.d("CameraProvider", "Camera provider initialized successfully")
                 } catch (e: ExecutionException) {
                     // Handle any errors (including cancellation) here.
                     Log.e(TAG, "Unhandled exception", e)
@@ -179,7 +248,7 @@ class CameraViewModel(
         return cameraProviderLiveData
     }
 
-    fun changeCameraFacing(lensFacing: Int,context: Context, previewView: PreviewView) {
+    fun changeCameraFacing(lensFacing: Int, context: Context, previewView: PreviewView) {
         this.lensFacing = lensFacing
         this.videoCapture = null
         this.imageCapture = null
@@ -201,7 +270,7 @@ class CameraViewModel(
         }
         imageAnalysis = bindAnalysisUseCase(context)
         imageCapture = ImageCapture.Builder().build()
-        //Log.d("CameraProvider","videoCapture")
+
         if (videoCapture == null) {
             videoCapture = createVideoCaptureUseCase(context)
         }
@@ -210,15 +279,30 @@ class CameraViewModel(
 
         // bind life cycle with image capture
         cameraProviderLiveData.value?.bindToLifecycle(lifecycleOwner, cameraSelector, preview, imageAnalysis, imageCapture)
+        Log.d(TAG, "All use cases bound successfully")
     }
 
     @androidx.annotation.OptIn(ExperimentalGetImage::class)
     private fun bindAnalysisUseCase(context: Context): ImageAnalysis {
-        val analysisUseCase = ImageAnalysis.Builder().build()
+        val analysisUseCase = ImageAnalysis.Builder()
+            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST) // Process only latest frame
+            .setImageQueueDepth(1) // Keep only 1 frame in queue
+            .setTargetResolution(android.util.Size(640, 480)) // Lower resolution for better performance
+            .build()
         needUpdateGraphicOverlayImageSourceInfo = true
+        var lastProcessedTime = 0L
+        val PROCESS_INTERVAL_MS = 100L // Process at most every 100ms (10 FPS)
+
         analysisUseCase.setAnalyzer(
             ContextCompat.getMainExecutor(context),
             ImageAnalysis.Analyzer { imageProxy: ImageProxy ->
+                val currentTime = System.currentTimeMillis()
+                if (currentTime - lastProcessedTime < PROCESS_INTERVAL_MS) {
+                    imageProxy.close() // Skip this frame
+                    return@Analyzer
+                }
+                lastProcessedTime = currentTime
+
                 if (needUpdateGraphicOverlayImageSourceInfo) {
                     val isImageFlipped = lensFacing == CameraSelector.LENS_FACING_FRONT
                     Log.d("CameraViewModel", "isImageFlipped: $isImageFlipped")
@@ -235,10 +319,8 @@ class CameraViewModel(
                         image = imageProxy
                     ) { results ->
                         bitmap = BitmapUtils.getBitmap(imageProxy, graphicOverlay)
-                        if (bitmap != null) {
-                            if (results != null) {
-                                onResults(bitmap!!, results)
-                            }
+                        if (bitmap != null && results != null) {
+                            onResults(bitmap!!, results)
                         }
                     }
                 } catch (e: MlKitException) {
@@ -267,7 +349,7 @@ class CameraViewModel(
         context: Context,
         videoCapture: VideoCapture<Recorder>,
         file_name: String,
-        recordingStatus: (isCompleted: Boolean)-> Unit
+        recordingStatus: (isCompleted: Boolean) -> Unit
     ) {
         if (recording != null) {
             recording?.stop()
@@ -281,9 +363,9 @@ class CameraViewModel(
         recording = videoCapture.output
             .prepareRecording(context, outputOptions)
             .apply { if (audioEnabled) withAudioEnabled() }
-            .start(ContextCompat.getMainExecutor(context)) { event->
+            .start(ContextCompat.getMainExecutor(context)) { event ->
 
-                when(event) {
+                when (event) {
                     is VideoRecordEvent.Finalize -> {
                         if (event.hasError()) {
                             recording?.close()
@@ -326,9 +408,9 @@ class CameraViewModel(
 
     fun requestAllPermission(context: Context) {
         if (!hasRequiredPermissions(context)) {
-            Log.d("Permission1","permission check")
+            Log.d("Permission1", "permission check")
             ActivityCompat.requestPermissions(
-                context as Activity, CAMERAX_PERMISSION,0
+                context as Activity, CAMERAX_PERMISSION, 0
             )
         }
     }
@@ -342,10 +424,68 @@ class CameraViewModel(
         }
     }
 
+    fun setMockApiMode(useMock: Boolean) {
+        injuryDetectionAPI.setUseMockApi(useMock)
+        Log.d(TAG, "Switched to ${if (useMock) "MOCK" else "REAL"} API mode")
+    }
+
+    fun testWebhookConnectivity(onResult: (Boolean, String) -> Unit) {
+        injuryDetectionAPI.testWebhookConnectivity(onResult)
+    }
+
+    fun checkFilePermissions(context: Context): Boolean {
+        val hasWritePermission = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            // For Android 10+, we can write to cache without permissions
+            true
+        } else {
+            ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+        }
+
+        val hasReadPermission = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            // For Android 10+, we can read from cache without permissions
+            true
+        } else {
+            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+        }
+
+        val cacheDir = context.cacheDir
+        val cacheWritable = cacheDir?.canWrite() ?: false
+        val cacheReadable = cacheDir?.canRead() ?: false
+
+        Log.d(TAG, "File permissions check:")
+        Log.d(TAG, "  - WRITE_EXTERNAL_STORAGE: $hasWritePermission")
+        Log.d(TAG, "  - READ_EXTERNAL_STORAGE: $hasReadPermission")
+        Log.d(TAG, "  - Cache directory writable: $cacheWritable")
+        Log.d(TAG, "  - Cache directory readable: $cacheReadable")
+        Log.d(TAG, "  - Cache directory path: ${cacheDir?.absolutePath}")
+        Log.d(TAG, "  - Android API level: ${android.os.Build.VERSION.SDK_INT}")
+
+        return hasWritePermission && hasReadPermission && cacheWritable && cacheReadable
+    }
+
+    fun manualTriggerImageCapture(context: Context) {
+        Log.d(TAG, "Manual trigger for image capture initiated")
+
+        // Check file permissions before proceeding
+        val hasPermissions = checkFilePermissions(context)
+        if (!hasPermissions) {
+            Log.e(TAG, "File permissions check failed - requesting permissions")
+            Toast.makeText(context, "File permissions required for image capture", Toast.LENGTH_LONG).show()
+            requestAllPermission(context)
+            return
+        }
+
+        Log.d(TAG, "File permissions OK - proceeding with image capture")
+        captureAndAnalyzeImage(context)
+    }
+
     companion object {
         val CAMERAX_PERMISSION = arrayOf(
             Manifest.permission.CAMERA,
-            Manifest.permission.RECORD_AUDIO
+            Manifest.permission.RECORD_AUDIO,
+            // File permissions for older Android versions
+            Manifest.permission.WRITE_EXTERNAL_STORAGE,
+            Manifest.permission.READ_EXTERNAL_STORAGE
         )
     }
 
@@ -353,5 +493,4 @@ class CameraViewModel(
         super.onCleared()
         stopSpeechRecognition()
     }
-
 }

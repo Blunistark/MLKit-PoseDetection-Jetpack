@@ -17,6 +17,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.mlkit_posedetection_jetpack.camera_usecase.CameraScreen
 import com.example.mlkit_posedetection_jetpack.camera_usecase.CameraViewModel
+import com.example.mlkit_posedetection_jetpack.ui.EnhancedCameraScreen
 import com.example.mlkit_posedetection_jetpack.ui.theme.MLKitPoseDetectionJetpackTheme
 
 class MainActivity : ComponentActivity() {
@@ -46,8 +47,8 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    // A surface container using the 'background' color from the theme
-                    CameraScreen()
+                    // Enhanced camera screen with multiple modes
+                    EnhancedCameraScreen()
                 }
             }
         }
