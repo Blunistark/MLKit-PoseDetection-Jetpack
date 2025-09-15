@@ -8,6 +8,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.util.Log
 import android.widget.Toast
+import androidx.core.content.ContextCompat
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ExperimentalGetImage
 import androidx.camera.core.ImageAnalysis
@@ -27,7 +28,6 @@ import androidx.camera.video.VideoRecordEvent
 import androidx.camera.view.PreviewView
 import androidx.compose.runtime.mutableStateOf
 import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.ViewModel
@@ -68,6 +68,7 @@ class CameraViewModel(
     // Speech recognition and injury detection
     private var speechRecognitionManager: SpeechRecognitionManager? = null
     private val injuryDetectionAPI = InjuryDetectionAPI()
+    private var locationManager: LocationManager? = null
 
     // State for UI
     val isListening = mutableStateOf(false)
@@ -88,7 +89,11 @@ class CameraViewModel(
             }
         )
         speechRecognitionManager?.startListening()
-        Log.d(TAG, "Speech recognition initialized and started")
+
+        // Initialize location manager
+        locationManager = LocationManager(context)
+
+        Log.d(TAG, "Speech recognition and location manager initialized")
     }
 
     fun stopSpeechRecognition() {
@@ -155,17 +160,49 @@ class CameraViewModel(
 
                         Log.d(TAG, "Captured bitmap size: ${capturedBitmap.width}x${capturedBitmap.height}")
 
-                        // Use real API for injury detection
-                        injuryDetectionAPI.analyzeImage(capturedBitmap, context.cacheDir, null, null) { result ->
-                            isProcessingImage.value = false
-                            lastDetectionResult.value = result
+                        // Get current location before sending to API
+                        locationManager?.getCurrentLocation { latitude, longitude ->
+                            Log.d(TAG, "Using location for API call: lat=$latitude, lng=$longitude")
 
-                            result?.let {
-                                Toast.makeText(context, it.message, Toast.LENGTH_LONG).show()
-                                Log.d(TAG, "Injury detection result: $it")
-                            } ?: run {
-                                Toast.makeText(context, "Failed to analyze image", Toast.LENGTH_SHORT).show()
-                                Log.e(TAG, "No result received from injury detection")
+                            // Use real API for injury detection with GPS coordinates
+                            injuryDetectionAPI.analyzeImage(capturedBitmap, context.cacheDir, latitude, longitude) { result ->
+                                isProcessingImage.value = false
+                                lastDetectionResult.value = result
+
+                                result?.let {
+                                    // Run Toast on main thread
+                                    ContextCompat.getMainExecutor(context).execute {
+                                        Toast.makeText(context, it.message, Toast.LENGTH_LONG).show()
+                                    }
+                                    Log.d(TAG, "Injury detection result: $it")
+                                } ?: run {
+                                    // Run Toast on main thread
+                                    ContextCompat.getMainExecutor(context).execute {
+                                        Toast.makeText(context, "Failed to analyze image", Toast.LENGTH_SHORT).show()
+                                    }
+                                    Log.e(TAG, "No result received from injury detection")
+                                }
+                            }
+                        } ?: run {
+                            // Location manager not available, proceed without GPS
+                            Log.w(TAG, "Location manager not available, proceeding without GPS coordinates")
+                            injuryDetectionAPI.analyzeImage(capturedBitmap, context.cacheDir, null, null) { result ->
+                                isProcessingImage.value = false
+                                lastDetectionResult.value = result
+
+                                result?.let {
+                                    // Run Toast on main thread
+                                    ContextCompat.getMainExecutor(context).execute {
+                                        Toast.makeText(context, it.message, Toast.LENGTH_LONG).show()
+                                    }
+                                    Log.d(TAG, "Injury detection result: $it")
+                                } ?: run {
+                                    // Run Toast on main thread
+                                    ContextCompat.getMainExecutor(context).execute {
+                                        Toast.makeText(context, "Failed to analyze image", Toast.LENGTH_SHORT).show()
+                                    }
+                                    Log.e(TAG, "No result received from injury detection")
+                                }
                             }
                         }
 
@@ -198,7 +235,10 @@ class CameraViewModel(
     // Add method to manually trigger image analysis without capture (useful for testing)
     fun manuallyAnalyzeCurrentImage(context: Context) {
         if (isProcessingImage.value) {
-            Toast.makeText(context, "Already processing an image", Toast.LENGTH_SHORT).show()
+            // Run Toast on main thread
+            ContextCompat.getMainExecutor(context).execute {
+                Toast.makeText(context, "Already processing an image", Toast.LENGTH_SHORT).show()
+            }
             return
         }
 
@@ -211,15 +251,24 @@ class CameraViewModel(
                 lastDetectionResult.value = result
 
                 result?.let {
-                    Toast.makeText(context, "Manual Analysis: ${it.message}", Toast.LENGTH_LONG).show()
+                    // Run Toast on main thread
+                    ContextCompat.getMainExecutor(context).execute {
+                        Toast.makeText(context, "Manual Analysis: ${it.message}", Toast.LENGTH_LONG).show()
+                    }
                     Log.d(TAG, "Manual analysis result: $it")
                 } ?: run {
-                    Toast.makeText(context, "Manual analysis failed", Toast.LENGTH_SHORT).show()
+                    // Run Toast on main thread
+                    ContextCompat.getMainExecutor(context).execute {
+                        Toast.makeText(context, "Manual analysis failed", Toast.LENGTH_SHORT).show()
+                    }
                     Log.e(TAG, "Manual analysis returned no result")
                 }
             }
         } ?: run {
-            Toast.makeText(context, "No image available for analysis", Toast.LENGTH_SHORT).show()
+            // Run Toast on main thread
+            ContextCompat.getMainExecutor(context).execute {
+                Toast.makeText(context, "No image available for analysis", Toast.LENGTH_SHORT).show()
+            }
             Log.e(TAG, "No bitmap available for manual analysis")
         }
     }
@@ -325,7 +374,10 @@ class CameraViewModel(
                     }
                 } catch (e: MlKitException) {
                     Log.e("Camera", "Failed to process image. Error: " + e.localizedMessage)
-                    Toast.makeText(context, e.localizedMessage, Toast.LENGTH_SHORT).show()
+                    // Run Toast on main thread
+                    ContextCompat.getMainExecutor(context).execute {
+                        Toast.makeText(context, e.localizedMessage, Toast.LENGTH_SHORT).show()
+                    }
                 }
             }
         )
@@ -370,11 +422,14 @@ class CameraViewModel(
                         if (event.hasError()) {
                             recording?.close()
                             recording = null
-                            Toast.makeText(
-                                context,
-                                "Video capture failed",
-                                Toast.LENGTH_LONG
-                            ).show()
+                            // Run Toast on main thread
+                            ContextCompat.getMainExecutor(context).execute {
+                                Toast.makeText(
+                                    context,
+                                    "Video capture failed",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }
                         } else {
                             val uri = event.outputResults.outputUri
                             if (uri != Uri.EMPTY) {
@@ -383,20 +438,26 @@ class CameraViewModel(
                                     StandardCharsets.UTF_8.toString()
                                 )
                             }
-                            Toast.makeText(
-                                context,
-                                "Video capture Succeeded",
-                                Toast.LENGTH_LONG
-                            ).show()
+                            // Run Toast on main thread
+                            ContextCompat.getMainExecutor(context).execute {
+                                Toast.makeText(
+                                    context,
+                                    "Video capture Succeeded",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }
                             recordingStatus(true)
                         }
                     }
                     is VideoRecordEvent.Start -> {
-                        Toast.makeText(
-                            context,
-                            "Video recording Started...",
-                            Toast.LENGTH_LONG
-                        ).show()
+                        // Run Toast on main thread
+                        ContextCompat.getMainExecutor(context).execute {
+                            Toast.makeText(
+                                context,
+                                "Video recording Started...",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
                     }
 
                     is VideoRecordEvent.Pause -> {}

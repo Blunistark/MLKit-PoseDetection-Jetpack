@@ -18,6 +18,69 @@ data class InjuryDetectionResult(
     val message: String
 )
 
+data class EmergencyCacheResponse(
+    val callId: String,
+    val location: String,
+    val coordinates: Coordinates,
+    val reportedTime: String,
+    val callType: String,
+    val severity: String,
+    val sceneAssessment: String,
+    val patient: Patient,
+    val medicalInsights: MedicalInsights,
+    val locationAssessment: LocationAssessment,
+    val estimatedETA: String,
+    val analysisComplete: Boolean,
+    val aiConfidence: String
+)
+
+data class Coordinates(
+    val lat: Double,
+    val lng: Double
+)
+
+data class Patient(
+    val name: String,
+    val age: String,
+    val condition: String,
+    val vitals: Vitals,
+    val analysisTimestamp: String
+)
+
+data class Vitals(
+    val heartRate: String,
+    val bloodPressure: String,
+    val temperature: String,
+    val oxygen: String
+)
+
+data class MedicalInsights(
+    val immediateConcerns: List<String>,
+    val treatmentPriorities: List<String>,
+    val recommendedEquipment: List<String>,
+    val hospitalPrep: String
+)
+
+data class LocationAssessment(
+    val coordinates: LocationCoordinates,
+    val accessibility: String,
+    val hazards: List<String>,
+    val navigationConcerns: String,
+    val areaType: String
+)
+
+data class LocationCoordinates(
+    val latitude: String,
+    val longitude: String
+)
+
+data class ChatMessage(
+    val id: String,
+    val message: String,
+    val isUser: Boolean,
+    val timestamp: Long
+)
+
 class InjuryDetectionAPI {
     private val client = OkHttpClient()
 
@@ -266,5 +329,164 @@ class InjuryDetectionAPI {
             Log.d(TAG, "Mock result: $result")
             onResult(result)
         }, 1500) // 1.5 second delay to simulate API call
+    }
+
+    // Method to fetch emergency cache
+    fun fetchEmergencyCache(onResult: (EmergencyCacheResponse?) -> Unit) {
+        val request = Request.Builder()
+            .url("https://unmixed-pseudofinally-shari.ngrok-free.app/api/emergency-cache")
+            .get()
+            .addHeader("User-Agent", "Android-Injury-Detection-App")
+            .build()
+
+        Log.d(TAG, "Fetching emergency cache from: https://unmixed-pseudofinally-shari.ngrok-free.app/api/emergency-cache")
+
+        client.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                Log.e(TAG, "Emergency cache fetch failed", e)
+                onResult(null)
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                try {
+                    val responseBody = response.body?.string()
+                    Log.d(TAG, "Emergency cache response: ${response.code} - $responseBody")
+
+                    if (response.isSuccessful && responseBody != null) {
+                        val result = parseEmergencyCacheResponse(responseBody)
+                        onResult(result)
+                    } else {
+                        Log.e(TAG, "Emergency cache fetch unsuccessful: ${response.code}")
+                        onResult(null)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error processing emergency cache response", e)
+                    onResult(null)
+                } finally {
+                    response.close()
+                }
+            }
+        })
+    }
+
+    private fun parseEmergencyCacheResponse(responseBody: String): EmergencyCacheResponse {
+        return try {
+            val json = JSONObject(responseBody)
+
+            val coordinatesJson = json.getJSONObject("coordinates")
+            val coordinates = Coordinates(
+                lat = coordinatesJson.getDouble("lat"),
+                lng = coordinatesJson.getDouble("lng")
+            )
+
+            val patientJson = json.getJSONObject("patient")
+            val vitalsJson = patientJson.getJSONObject("vitals")
+            val vitals = Vitals(
+                heartRate = vitalsJson.getString("heartRate"),
+                bloodPressure = vitalsJson.getString("bloodPressure"),
+                temperature = vitalsJson.getString("temperature"),
+                oxygen = vitalsJson.getString("oxygen")
+            )
+            val patient = Patient(
+                name = patientJson.getString("name"),
+                age = patientJson.getString("age"),
+                condition = patientJson.getString("condition"),
+                vitals = vitals,
+                analysisTimestamp = patientJson.getString("analysisTimestamp")
+            )
+
+            val medicalInsightsJson = json.getJSONObject("medicalInsights")
+            val medicalInsights = MedicalInsights(
+                immediateConcerns = jsonArrayToList(medicalInsightsJson.getJSONArray("immediateConcerns")),
+                treatmentPriorities = jsonArrayToList(medicalInsightsJson.getJSONArray("treatmentPriorities")),
+                recommendedEquipment = jsonArrayToList(medicalInsightsJson.getJSONArray("recommendedEquipment")),
+                hospitalPrep = medicalInsightsJson.getString("hospitalPrep")
+            )
+
+            val locationAssessmentJson = json.getJSONObject("locationAssessment")
+            val locCoordsJson = locationAssessmentJson.getJSONObject("coordinates")
+            val locCoordinates = LocationCoordinates(
+                latitude = locCoordsJson.getString("latitude"),
+                longitude = locCoordsJson.getString("longitude")
+            )
+            val locationAssessment = LocationAssessment(
+                coordinates = locCoordinates,
+                accessibility = locationAssessmentJson.getString("accessibility"),
+                hazards = jsonArrayToList(locationAssessmentJson.getJSONArray("hazards")),
+                navigationConcerns = locationAssessmentJson.getString("navigationConcerns"),
+                areaType = locationAssessmentJson.getString("areaType")
+            )
+
+            EmergencyCacheResponse(
+                callId = json.getString("callId"),
+                location = json.getString("location"),
+                coordinates = coordinates,
+                reportedTime = json.getString("reportedTime"),
+                callType = json.getString("callType"),
+                severity = json.getString("severity"),
+                sceneAssessment = json.getString("sceneAssessment"),
+                patient = patient,
+                medicalInsights = medicalInsights,
+                locationAssessment = locationAssessment,
+                estimatedETA = json.getString("estimatedETA"),
+                analysisComplete = json.getBoolean("analysisComplete"),
+                aiConfidence = json.getString("aiConfidence")
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error parsing emergency cache JSON", e)
+            throw e
+        }
+    }
+
+    private fun jsonArrayToList(jsonArray: org.json.JSONArray): List<String> {
+        val list = mutableListOf<String>()
+        for (i in 0 until jsonArray.length()) {
+            list.add(jsonArray.getString(i))
+        }
+        return list
+    }
+
+    // Method to send message to chatbot
+    fun sendChatMessage(message: String, onResult: (String?) -> Unit) {
+        val requestBody = JSONObject().apply {
+            put("message", message)
+        }.toString()
+
+        val request = Request.Builder()
+            .url("https://unmixed-pseudofinally-shari.ngrok-free.app/api/reply")
+            .post(RequestBody.create("application/json".toMediaTypeOrNull(), requestBody))
+            .addHeader("Content-Type", "application/json")
+            .addHeader("User-Agent", "Android-Injury-Detection-App")
+            .build()
+
+        Log.d(TAG, "Sending message to chatbot: $message")
+
+        client.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                Log.e(TAG, "Chatbot request failed", e)
+                onResult(null)
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                try {
+                    val responseBody = response.body?.string()
+                    Log.d(TAG, "Chatbot response: ${response.code} - $responseBody")
+
+                    if (response.isSuccessful && responseBody != null) {
+                        val jsonResponse = JSONObject(responseBody)
+                        val reply = jsonResponse.optString("reply", "Sorry, I couldn't understand that.")
+                        onResult(reply)
+                    } else {
+                        Log.e(TAG, "Chatbot request unsuccessful: ${response.code}")
+                        onResult("Sorry, I'm having trouble connecting right now.")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error processing chatbot response", e)
+                    onResult("Sorry, there was an error processing your message.")
+                } finally {
+                    response.close()
+                }
+            }
+        })
     }
 }

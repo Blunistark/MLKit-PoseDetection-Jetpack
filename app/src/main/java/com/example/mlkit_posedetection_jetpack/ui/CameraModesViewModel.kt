@@ -6,6 +6,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import com.example.mlkit_posedetection_jetpack.camera_usecase.ChatMessage
+import com.example.mlkit_posedetection_jetpack.camera_usecase.InjuryDetectionAPI
+import com.example.mlkit_posedetection_jetpack.camera_usecase.EmergencyCacheResponse
 
 data class CameraUiState(
     val selectedMode: Int = 0,
@@ -17,7 +20,11 @@ data class CameraUiState(
     val capturedImageUri: String? = null,
     val injuryDetectionResult: String? = null,
     val errorMessage: String? = null,
-    val showFocusIndicator: Boolean = false
+    val showFocusIndicator: Boolean = false,
+    val emergencyCache: EmergencyCacheResponse? = null,
+    val chatMessages: List<ChatMessage> = emptyList(),
+    val isChatOpen: Boolean = false,
+    val isTyping: Boolean = false
 )
 
 class CameraModesViewModel : ViewModel() {
@@ -151,7 +158,94 @@ class CameraModesViewModel : ViewModel() {
     fun clearResults() {
         _uiState.value = _uiState.value.copy(
             capturedImageUri = null,
-            injuryDetectionResult = null
+            injuryDetectionResult = null,
+            emergencyCache = null
         )
+    }
+
+    fun clearEmergencyCache() {
+        _uiState.value = _uiState.value.copy(emergencyCache = null)
+    }
+
+    fun fetchEmergencyCache() {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isProcessing = true)
+            try {
+                val api = InjuryDetectionAPI()
+                api.fetchEmergencyCache { response ->
+                    if (response != null) {
+                        _uiState.value = _uiState.value.copy(
+                            isProcessing = false,
+                            emergencyCache = response
+                        )
+                        // Store in SharedPreferences
+                        // Note: This would require context, so we'll handle storage in the composable
+                    } else {
+                        _uiState.value = _uiState.value.copy(
+                            isProcessing = false,
+                            errorMessage = "Failed to fetch emergency cache"
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(
+                    isProcessing = false,
+                    errorMessage = "Error fetching emergency cache: ${e.message}"
+                )
+            }
+        }
+    }
+
+    fun toggleChat() {
+        _uiState.value = _uiState.value.copy(isChatOpen = !_uiState.value.isChatOpen)
+    }
+
+    fun sendChatMessage(message: String) {
+        if (message.isBlank()) return
+
+        val userMessage = ChatMessage(
+            id = System.currentTimeMillis().toString(),
+            message = message,
+            isUser = true,
+            timestamp = System.currentTimeMillis()
+        )
+
+        _uiState.value = _uiState.value.copy(
+            chatMessages = _uiState.value.chatMessages + userMessage,
+            isTyping = true
+        )
+
+        viewModelScope.launch {
+            try {
+                val api = InjuryDetectionAPI()
+                api.sendChatMessage(message) { response ->
+                    val botMessage = ChatMessage(
+                        id = (System.currentTimeMillis() + 1).toString(),
+                        message = response ?: "Sorry, I couldn't get a response.",
+                        isUser = false,
+                        timestamp = System.currentTimeMillis()
+                    )
+                    _uiState.value = _uiState.value.copy(
+                        chatMessages = _uiState.value.chatMessages + botMessage,
+                        isTyping = false
+                    )
+                }
+            } catch (e: Exception) {
+                val errorMessage = ChatMessage(
+                    id = (System.currentTimeMillis() + 1).toString(),
+                    message = "Error: ${e.message}",
+                    isUser = false,
+                    timestamp = System.currentTimeMillis()
+                )
+                _uiState.value = _uiState.value.copy(
+                    chatMessages = _uiState.value.chatMessages + errorMessage,
+                    isTyping = false
+                )
+            }
+        }
+    }
+
+    fun clearChat() {
+        _uiState.value = _uiState.value.copy(chatMessages = emptyList())
     }
 }

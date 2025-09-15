@@ -29,7 +29,7 @@ class MainActivity : ComponentActivity() {
         if (allGranted) {
             Toast.makeText(this, "All permissions granted", Toast.LENGTH_SHORT).show()
         } else {
-            Toast.makeText(this, "Permissions required for speech recognition and camera", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Permissions required for camera, speech recognition, and location", Toast.LENGTH_LONG).show()
         }
     }
     
@@ -57,13 +57,15 @@ class MainActivity : ComponentActivity() {
     private fun checkAndRequestPermissions() {
         val permissions = arrayOf(
             Manifest.permission.CAMERA,
-            Manifest.permission.RECORD_AUDIO
+            Manifest.permission.RECORD_AUDIO,
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION
         )
-        
+
         val permissionsToRequest = permissions.filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
-        
+
         if (permissionsToRequest.isNotEmpty()) {
             requestPermissionLauncher.launch(permissionsToRequest.toTypedArray())
         }
